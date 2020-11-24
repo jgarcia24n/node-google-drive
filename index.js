@@ -263,8 +263,10 @@ var NodeGoogleDrive = function(options) {
  * @param  {string}                        [options.orderBy=null]                    Optinally sort results by a given field
  * @param  {string}                        [options.spaces='drive']                  The spaces (drive, photos, appData)
  * @param  {number}                        [options.pageSize=100]                    The page size (max 1000)
- * @param  {boolean}                       [options.supportsTeamDrives=false]        Wether it supports team drives
- * @param  {string}                        [options.teamDriveId='']                  The team drive identifier
+ * @param  {string}                        [options.corpora='user']                      The drive identifier
+ * @param  {boolean}                       [options.includeItemsFromAllDrives=true]  Wether to include all items from all drives
+ * @param  {boolean}                       [options.supportsAllDrives=true]         Wether to support all drive types
+ * @param  {string}                        [options.driveId='']                      The drive identifier
  *
  * @return {Promise<files/list#response>}  List of files and or folders resulting from the request
  */
@@ -278,8 +280,10 @@ NodeGoogleDrive.prototype.list = async function({
   orderBy = null,
   spaces = 'drive',
   pageSize = 100,
-  supportsTeamDrives = false,
-  teamDriveId = ''
+  corpora = 'user',
+  includeItemsFromAllDrives = true,
+  supportsAllDrives = true,
+  driveId = ''
 } = {}) {
   q += recursive === false ? `AND ('${fileId}' in parents)` : '';
 
@@ -293,8 +297,10 @@ NodeGoogleDrive.prototype.list = async function({
     q,
     spaces,
     pageSize,
-    supportsTeamDrives,
-    teamDriveId
+    corpora,
+    includeItemsFromAllDrives,
+    supportsAllDrives,
+    driveId
   };
 
   return this.service.files
@@ -442,20 +448,16 @@ NodeGoogleDrive.prototype.exportFile = function(
  * Gets a file and pipe its body to the desired destination (it only works for non google-docs types)
  *
  * @param  {google.drive.files#resource}  file               A file resource with id, name and type
- * @param  {string}                       destinationFolder  The destination folder to download to (use absolute paths
- *                                                           to avoid surprises)
  * @param  {string}                       fileName           (optional) The file name. Defaults to the file resource's name
  * @return {Promise}                      A promise that resolves when the file is downloaded
  */
 NodeGoogleDrive.prototype.getFile = function(
   file,
-  destinationFolder,
   fileName
 ) {
   if (file.mimeType.indexOf('vnd.google-apps') !== -1) {
     return this.exportFile(
       file,
-      destinationFolder,
       defaultExportFormats[file.mimeType],
       fileName
     );
@@ -465,19 +467,18 @@ NodeGoogleDrive.prototype.getFile = function(
       fileId: file.id,
       alt: 'media'
     },
-    destination = `${destinationFolder || '/tmp'}/${file.name}`,
-    dest = fs.createWriteStream(destination);
-
+    bufs = [];
   return new Promise((resolve, reject) => {
     _this.service.files
       .get(request)
+      .on('data', function(d){ bufs.push(d); })
       .on('end', function() {
-        resolve(destination);
+        let buf = Buffer.concat(bufs)
+        resolve(buf);
       })
       .on('error', function(err) {
         reject(err);
       })
-      .pipe(dest);
   });
 };
 /**
@@ -566,23 +567,23 @@ NodeGoogleDrive.prototype.create = async function({
   parentFolder = ROOT_FOLDER,
   name = null,
   mimeType = null,
-  fields
+  fields,
+  corpora = 'user',
+  includeItemsFromAllDrives = true,
+  supportsAllDrives = true
 }) {
   let media = { mimeType };
-
-  if (typeof source === 'string' && fs.existsSync(source)) {
-    name = name || path.basename(source);
-    media.body = fs.createReadStream(source);
-  } else {
-    media.body = source;
-    name = name || 'New File' + Date.now();
-  }
+  media.body = source;
+  name = name || 'New File' + Date.now();
 
   let creationRequest = {
+    corpora,
+    includeItemsFromAllDrives,
+    supportsAllDrives,
     resource: {
       name,
       mimeType,
-      parents: [parentFolder]
+      parents: [parentFolder],
     },
     media
   };
